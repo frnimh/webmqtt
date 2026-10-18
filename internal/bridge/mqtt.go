@@ -3,6 +3,7 @@ package bridge
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/hex"
 	"fmt"
 	"log/slog"
@@ -40,6 +41,13 @@ func ConnectMQTT(ctx context.Context, cfg MQTTConfig, history *History, logger *
 		SetKeepAlive(30 * time.Second).
 		SetPingTimeout(5 * time.Second).
 		SetMaxReconnectInterval(10 * time.Second)
+	if cfg.SSL.Enabled {
+		opts.SetTLSConfig(&tls.Config{
+			MinVersion: tls.VersionTLS12,
+			// Certificate verification is disabled only by the explicit ssl.verify option.
+			InsecureSkipVerify: !cfg.SSL.Verify,
+		})
+	}
 	opts.SetConnectionLostHandler(func(_ mqtt.Client, err error) {
 		m.ready.Store(false)
 		logger.Warn("MQTT disconnected; reconnecting", "error", err)

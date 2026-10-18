@@ -35,6 +35,9 @@ global:
     port: 1883
     username: ""
     password: ""
+    ssl:
+      enabled: false
+      verify: true
 
 endpoints:
   - name: turn-on
@@ -61,11 +64,32 @@ To enable Basic Auth for every configured endpoint:
 
 Both credentials must be nonempty, or both empty to disable authentication.
 Partial credentials are rejected at startup. Use HTTPS at your reverse proxy when
-exposing Basic Auth beyond a trusted network. MQTT uses plain TCP, MQTT 3.1.1,
+exposing Basic Auth beyond a trusted network. MQTT uses MQTT 3.1.1,
 QoS 1, and non-retained publishes. `mqtt.host` is a hostname or unbracketed IP
 address without a scheme or port. Topics must be exact names; wildcard filters
 are not supported. Unknown config fields, duplicate paths, invalid ports, and
 invalid SUB history limits are rejected at startup.
+
+Set `global.mqtt.ssl.enabled: true` to connect over TLS (TLS 1.2 or newer), and
+set `global.mqtt.port` to your broker's TLS port, commonly `8883`:
+
+```yaml
+global:
+  mqtt:
+    host: mqtt.example.com
+    port: 8883
+    ssl:
+      enabled: true
+      verify: true
+```
+
+This is a fragment to merge into the full configuration above. `ssl.enabled`
+defaults to `false`, preserving plain TCP for existing configs. `ssl.verify`
+defaults to `true` and checks the broker's certificate chain and hostname using
+the system's trusted CAs. Setting it to `false` keeps encryption but skips those
+checks, allowing self-signed or otherwise untrusted certificates. It has no effect
+when SSL is disabled. The configured port is always used; enabling SSL does not
+change it automatically.
 
 ## Run locally
 

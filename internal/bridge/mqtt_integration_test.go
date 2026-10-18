@@ -4,22 +4,31 @@ package bridge
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
-func TestMQTTIntegration(t *testing.T) {
+func newMQTTTestBroker(t *testing.T, settings string) (int, func(), func()) {
+	t.Helper()
 	brokerPath, err := exec.LookPath("mosquitto")
 	if err != nil {
 		t.Skip("install mosquitto to run live MQTT integration tests")
@@ -33,7 +42,7 @@ func TestMQTTIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	configPath := filepath.Join(t.TempDir(), "mosquitto.conf")
-	if err := os.WriteFile(configPath, []byte(fmt.Sprintf("listener %d 127.0.0.1\nallow_anonymous true\npersistence false\n", port)), 0600); err != nil {
+	if err := os.WriteFile(configPath, []byte(fmt.Sprintf("listener %d 127.0.0.1\nallow_anonymous true\npersistence false\n%s", port, settings)), 0600); err != nil {
 		t.Fatal(err)
 	}
 	var broker *exec.Cmd
@@ -67,6 +76,11 @@ func TestMQTTIntegration(t *testing.T) {
 	}
 	t.Cleanup(stopBroker)
 	startBroker()
+	return port, startBroker, stopBroker
+}
+
+func TestMQTTIntegration(t *testing.T) {
+	port, startBroker, stopBroker := newMQTTTestBroker(t, "")
 	cfg := Config{Global: GlobalConfig{MQTT: MQTTConfig{Host: "127.0.0.1", Port: port}}, Endpoints: testEndpoints()}
 	history := NewHistory(cfg.Endpoints)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
@@ -127,6 +141,82 @@ func TestMQTTIntegration(t *testing.T) {
 		messages := history.Last("test/topic", 1)
 		return len(messages) == 1 && messages[0].Payload == "configured payload"
 	})
+}
+
+func TestMQTTTLSIntegration(t *testing.T) {
+	certFile, keyFile := writeMQTTTestCertificate(t)
+	port, _, _ := newMQTTTestBroker(t, fmt.Sprintf("certfile %s\nkeyfile %s\n", certFile, keyFile))
+	cfg := MQTTConfig{Host: "127.0.0.1", Port: port, SSL: SSLConfig{Enabled: true, Verify: true}}
+	history := NewHistory(testEndpoints())
+
+	t.Run("verify rejects untrusted certificate", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		defer cancel()
+		backend, err := ConnectMQTT(ctx, cfg, history, quietLogger())
+		if err == nil {
+			backend.Close()
+			t.Fatal("connection with an untrusted certificate succeeded")
+		}
+		if !strings.Contains(err.Error(), "x509:") {
+			t.Fatalf("expected certificate verification failure, got %v", err)
+		}
+	})
+
+	t.Run("verify false permits TLS publish and subscribe", func(t *testing.T) {
+		cfg.SSL.Verify = false
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		backend, err := ConnectMQTT(ctx, cfg, history, quietLogger())
+		cancel()
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(backend.Close)
+		handler := NewHandler(Config{Endpoints: testEndpoints()}, backend, history, quietLogger())
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest("GET", "/publish", nil))
+		if w.Code != 200 {
+			t.Fatalf("TLS publish: %d %s", w.Code, w.Body)
+		}
+		eventually(t, 5*time.Second, func() bool {
+			messages := history.Last("test/topic", 1)
+			return len(messages) == 1 && messages[0].Payload == "configured payload"
+		})
+	})
+}
+
+func writeMQTTTestCertificate(t *testing.T) (string, string) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "localhost"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		DNSNames:     []string{"localhost"},
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	certFile, keyFile := filepath.Join(dir, "server.crt"), filepath.Join(dir, "server.key")
+	if err := os.WriteFile(certFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return certFile, keyFile
 }
 
 func eventually(t *testing.T, timeout time.Duration, condition func() bool) {

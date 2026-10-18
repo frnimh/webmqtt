@@ -8,6 +8,9 @@ global:
     port: 1883
     username: mqtt_user
     password: mqtt_pass
+    ssl:
+      enabled: false
+      verify: true
 
 endpoints:
   - name: endpoint1

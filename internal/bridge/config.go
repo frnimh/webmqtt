@@ -31,10 +31,16 @@ type AuthConfig struct {
 }
 
 type MQTTConfig struct {
-	Host     string `yaml:"host"`
-	Port     int    `yaml:"port"`
-	Username string `yaml:"username"`
-	Password string `yaml:"password"`
+	Host     string    `yaml:"host"`
+	Port     int       `yaml:"port"`
+	Username string    `yaml:"username"`
+	Password string    `yaml:"password"`
+	SSL      SSLConfig `yaml:"ssl"`
+}
+
+type SSLConfig struct {
+	Enabled bool `yaml:"enabled"`
+	Verify  bool `yaml:"verify"`
 }
 
 type Endpoint struct {
@@ -61,6 +67,8 @@ func LoadConfig(path string) (Config, error) {
 
 func DecodeConfig(r io.Reader) (Config, error) {
 	var cfg Config
+	// Enabling TLS without an explicit verify setting must verify the broker.
+	cfg.Global.MQTT.SSL.Verify = true
 	dec := yaml.NewDecoder(r)
 	dec.KnownFields(true)
 	if err := dec.Decode(&cfg); err != nil {
@@ -124,5 +132,9 @@ func (c *Config) Validate() error {
 }
 
 func (c MQTTConfig) BrokerURL() string {
-	return "tcp://" + net.JoinHostPort(c.Host, strconv.Itoa(c.Port))
+	scheme := "tcp"
+	if c.SSL.Enabled {
+		scheme = "ssl"
+	}
+	return scheme + "://" + net.JoinHostPort(c.Host, strconv.Itoa(c.Port))
 }

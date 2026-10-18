@@ -1,0 +1,37 @@
+global:
+  port: 8080
+  auth: #basic auth
+    username: admin
+    password: admin
+  mqtt:
+    host: mqtt.example.com
+    port: 1883
+    username: mqtt_user
+    password: mqtt_pass
+
+endpoints:
+  - name: endpoint1
+    path: /api/v1/resource1
+    method: PUB
+    mqtt:
+      topic: topic1
+      payload: text
+
+  - name: endpoint2
+    path: /api/v1/resource2
+    method: PUB
+    mqtt:
+      topic: topic1
+      payload: |
+        {
+          "key1": "value1",
+          "key2": "value2"
+        }
+
+  - name: endpoint3
+    path: /api/v1/resource3
+    method: SUB
+    mqtt:
+      topic: topic1
+      last: 1
+

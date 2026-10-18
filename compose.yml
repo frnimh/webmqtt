@@ -1,0 +1,13 @@
+services:
+  webmqtt:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./config.yml:/etc/webmqtt/config.yml:ro
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
